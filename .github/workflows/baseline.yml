@@ -1,0 +1,44 @@
+name: baseline-score
+
+# Online Linux scoring — no machine of your own needed. Runs the baseline engine over
+# the corpus on a fixed ubuntu-latest box and prints the scorecard. Manual trigger.
+# FLEURS clips fetch from HuggingFace out of the box; OpenSLR/YouTube + the hidden set
+# need your private audio staged via the RAMBLEFIX_AUDIO secret (see note at bottom).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install local ASR + audio deps
+        run: pip install --quiet faster-whisper datasets soundfile
+
+      - name: Fetch dev audio (FLEURS from HF; staged others if provided)
+        env:
+          # Optional: point at a tarball/dir of OpenSLR/YouTube/recorded clips you staged.
+          RAMBLEFIX_AUDIO_DIR: ""
+        run: python scripts/fetch_audio.py --manifest data/dev/manifest.json --out data/dev/audio
+
+      - name: Run baseline + score (network blocked inside the run)
+        run: python preview.py | tee baseline_scorecard.txt
+
+      - name: Upload scorecard
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-scorecard
+          path: baseline_scorecard.txt
+
+# To produce the OFFICIAL "bar to beat" + the RambleFix-vs-open-source head-to-head that
+# locks the win targets:
+#   1) Stage the OpenSLR/YouTube/recorded WAVs (private) and expose the dir via a secret,
+#      e.g. download in a step from a private release using ${{ secrets.RAMBLEFIX_AUDIO }}.
+#   2) Add the competing engines (whisper.cpp-small, Parakeet, OpenWhispr) as alt baselines
+#      and score each over data/hidden/manifest.json the same way.
+#   3) Commit the resulting numbers into AGENT_BRIEF.md as the locked targets.
