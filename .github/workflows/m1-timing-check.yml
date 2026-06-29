@@ -1,0 +1,68 @@
+name: m1-timing-check
+on:
+  workflow_dispatch:   # manual trigger -- avoid burning macOS-minutes on every push
+  push:
+    branches: [main]
+    paths:
+      - "solution/**"
+      - "requirements*.txt"
+
+jobs:
+  batch-preview:
+    runs-on: macos-14   # Apple Silicon (M1) hosted runner
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner hardware (sanity check we're really on Apple Silicon)
+        run: |
+          uname -a
+          sysctl -n machdep.cpu.brand_string || true
+          python3 --version
+
+      - name: Install batch-track deps
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Apple-Silicon-only fast path; harmless no-op on failure since
+          # solution/transcribe.py falls back to faster-whisper if this
+          # import fails.
+          pip install mlx mlx-whisper || echo "mlx install failed -- fast path will fall back to faster-whisper"
+          pip install transformers torch  # escalate (Hinglish) path
+
+      - name: Run batch preview on bundled sample clips
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time
+          sys.path.insert(0, os.getcwd())
+          from solution.transcribe import transcribe
+          manifest = json.load(open("samples/manifest.json"))
+          rows = []
+          for clip in manifest:
+              wav = os.path.join("samples", os.path.basename(clip["audio"]))
+              t0 = time.time()
+              r = transcribe(wav, "auto")
+              print(f"{clip['clip_id']:55s} route={r['route']:22s} "
+                    f"total_ms={r['timings_ms']['total']:6.0f}  text={r['text'][:80]!r}")
+          PY
+
+      - name: Upload raw timing log
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-batch-timing
+          path: "*.log"
+          if-no-files-found: ignore
+
+  streaming-preview:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install streaming-track deps
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-streaming.txt
+          pip install mlx mlx-whisper || echo "mlx install failed -- fast path will fall back to faster-whisper"
+          pip install transformers torch
+      - name: Run streaming preview (real-time audio pacing, real M1)
+        run: python3 preview_stream.py
